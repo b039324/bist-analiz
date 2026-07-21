@@ -1,36 +1,22 @@
-name: Hisse Verisi Guncelle
+name: Veri Cek
 on:
   workflow_dispatch:
-    inputs:
-      sym:
-        description: 'Hisse Kodu'
-        required: true
-        default: 'THYAO'
 jobs:
-  update:
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: pip install requests
-      - name: Veri Cek ve Kaydet
+      - name: Veri indir
         run: |
-          python << 'PYEOF'
-          import requests, json, os
-          sym = "${{ github.event.inputs.sym }}"
-          headers = {'User-Agent': 'Mozilla/5.0'}
-          url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}.IS?interval=1d&range=60d"
-          r = requests.get(url, headers=headers)
-          os.makedirs('data', exist_ok=True)
-          filepath = f"data/{sym}.json"
-          with open(filepath, 'w') as f:
-              json.dump(r.json(), f)
-          print(f"{sym} verisi kaydedildi: {filepath}")
-          PYEOF
-      - uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "Veri: ${{ github.event.inputs.sym }}"
+          mkdir -p data
+          curl -s -H "User-Agent: Mozilla/5.0" "https://query1.finance.yahoo.com/v8/finance/chart/THYAO.IS?interval=1d&range=60d" > data/THYAO.json
+          cat data/THYAO.json | head -c 200
+      - name: Commit ve Push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add data/THYAO.json
+          git commit -m "THYAO verisi eklendi" || echo "Degisiklik yok"
+          git push
