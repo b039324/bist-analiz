@@ -1,22 +1,21 @@
 name: Veri Cek
-on:
-  workflow_dispatch:
+on: workflow_dispatch
+permissions: write-all
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Veri indir
         run: |
           mkdir -p data
-          curl -s -H "User-Agent: Mozilla/5.0" "https://query1.finance.yahoo.com/v8/finance/chart/THYAO.IS?interval=1d&range=60d" > data/THYAO.json
-          cat data/THYAO.json | head -c 200
-      - name: Commit ve Push
+          curl -H "User-Agent: Mozilla/5.0" "https://query1.finance.yahoo.com/v8/finance/chart/THYAO.IS?interval=1d&range=60d" -o data/THYAO.json
+          echo "Dosya boyutu:"
+          ls -la data/
+      - name: Commit
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add data/THYAO.json
-          git commit -m "THYAO verisi eklendi" || echo "Degisiklik yok"
+          git add data/
+          git commit -m "veri" || true
           git push
