@@ -1,18 +1,172 @@
-name: Hisse Verisi Guncelle
-on:
-  schedule:
-    - cron: '*/5 * * * *'
-  workflow_dispatch:
-jobs:
-  update:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: |
-          mkdir -p data
-          for sym in THYAO AKBNK GARAN ASELS EREGL PETKM SASA BIMAS ISCTR; do
-            curl -s "https://query1.finance.yahoo.com/v8/finance/chart/${sym}.IS?interval=1d&range=60d" -o data/${sym}.json
-          done
-      - uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: Veri guncellendi
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BIST Analiz Motoru</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0d1117; color: #e6edf3; font-family: 'Segoe UI', sans-serif; min-height: 100vh; padding: 20px; }
+        .container { max-width: 900px; margin: 0 auto; }
+        .search-box { width: 100%; padding: 16px 20px; font-size: 20px; background: #161b22; border: 1px solid #30363d; border-radius: 12px; color: #e6edf3; outline: none; margin-bottom: 20px; }
+        .search-box:focus { border-color: #58a6ff; }
+        .result { display: none; background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 24px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
+        .price { font-size: 36px; font-weight: bold; }
+        .change { font-size: 20px; font-weight: bold; padding: 6px 12px; border-radius: 8px; }
+        .positive { color: #3fb950; background: #3fb95020; }
+        .negative { color: #f85149; background: #f8514920; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 20px; }
+        .card { background: #0d1117; border: 1px solid #30363d; border-radius: 10px; padding: 14px; }
+        .card-title { font-size: 11px; color: #8b949e; text-transform: uppercase; margin-bottom: 6px; }
+        .card-value { font-size: 17px; font-weight: bold; }
+        .card-sub { font-size: 11px; color: #8b949e; margin-top: 4px; }
+        .signal { display: inline-block; padding: 6px 14px; border-radius: 6px; font-size: 14px; font-weight: bold; }
+        .signal-AL { background: #3fb95030; color: #3fb950; }
+        .signal-SAT { background: #f8514930; color: #f85149; }
+        .signal-YUKSELEN { background: #3fb95020; color: #7ee787; }
+        .signal-DUSEN { background: #f8514920; color: #f85149; }
+        .signal-YATAY { background: #8b949e30; color: #8b949e; }
+        .chart-container { margin-top: 20px; border-radius: 12px; overflow: hidden; border: 1px solid #30363d; }
+        .loading { text-align: center; padding: 40px; color: #8b949e; font-size: 18px; }
+        @media (max-width: 600px) {
+            .price { font-size: 28px; }
+            .grid { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <input type="text" class="search-box" placeholder="Hisse kodu yaz (orn: THYAO) ve Enter'a bas..." id="searchInput" autofocus>
+        <div class="result" id="result">
+            <div class="header">
+                <div>
+                    <div class="price" id="price"></div>
+                    <div style="color:#8b949e;font-size:14px;" id="stockName"></div>
+                </div>
+                <div class="change" id="change"></div>
+            </div>
+            <div class="grid" id="grid"></div>
+            <div id="chartContainer" class="chart-container"></div>
+        </div>
+        <div class="loading" id="loading" style="display:none;">Yukleniyor...</div>
+    </div>
+
+    <script src="https://s3.tradingview.com/tv.js"></script>
+    <script>
+        const searchInput = document.getElementById('searchInput');
+        const resultDiv = document.getElementById('result');
+        const loading = document.getElementById('loading');
+
+        searchInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                const sym = searchInput.value.trim().toUpperCase();
+                if (sym) loadStock(sym);
+            }
+        });
+
+        async function loadStock(sym) {
+            resultDiv.style.display = 'none';
+            loading.style.display = 'block';
+
+            try {
+                const resp = await fetch(`data/${sym}.json`);
+                if (!resp.ok) throw new Error('Veri bulunamadi');
+                
+                const data = await resp.json();
+                const result = data.chart.result[0];
+                const meta = result.meta;
+                const quote = result.indicators.quote[0];
+                const close = quote.close.filter(v => v !== null);
+                const volume = quote.volume.filter(v => v !== null);
+                
+                const lastPrice = meta.regularMarketPrice;
+                const prevClose = meta.previousRegularMarketPrice || (close.length > 1 ? close[close.length-2] : lastPrice);
+                const dayChange = ((lastPrice - prevClose) / prevClose * 100);
+                
+                const lastVol = volume.length > 0 ? volume[volume.length-1] : 0;
+                const dayVolume = lastVol * lastPrice;
+                const avgVol = volume.slice(-30).reduce((a,b) => a+b, 0) / Math.min(30, volume.slice(-30).length);
+                const avgVolume = avgVol * lastPrice;
+
+                let rsi = 50;
+                if (close.length > 14) {
+                    let gains = 0, losses = 0;
+                    for (let i = close.length-14; i < close.length; i++) {
+                        const diff = close[i] - close[i-1];
+                        if (diff > 0) gains += diff; else losses += Math.abs(diff);
+                    }
+                    const avgGain = gains/14;
+                    const avgLoss = losses/14;
+                    if (avgLoss > 0) { const rs = avgGain / avgLoss; rsi = 100 - (100/(1+rs)); }
+                }
+
+                const ema9 = close.slice(-9).reduce((a,b)=>a+b,0)/Math.min(9, close.slice(-9).length);
+                const ema21 = close.slice(-21).reduce((a,b)=>a+b,0)/Math.min(21, close.slice(-21).length);
+
+                let signal = 'YATAY', signalClass = 'YATAY';
+                if (ema9 > ema21 && rsi > 50) { signal = 'YUKSELEN'; signalClass = 'YUKSELEN'; }
+                else if (ema9 < ema21 && rsi < 50) { signal = 'DUSEN'; signalClass = 'DUSEN'; }
+                if (rsi > 55 && ema9 > ema21 && dayChange > 0) { signal = 'AL'; signalClass = 'AL'; }
+                else if (rsi < 45 && ema9 < ema21 && dayChange < 0) { signal = 'SAT'; signalClass = 'SAT'; }
+
+                const entry = (lastPrice * 0.98).toFixed(2);
+                const target = (lastPrice * 1.05).toFixed(2);
+                const stop = (lastPrice * 0.96).toFixed(2);
+                const rr = ((target-lastPrice)/(lastPrice-stop)).toFixed(1);
+
+                document.getElementById('price').textContent = '₺' + lastPrice.toFixed(2);
+                document.getElementById('stockName').textContent = sym;
+                const changeEl = document.getElementById('change');
+                changeEl.textContent = (dayChange >= 0 ? '▲' : '▼') + ' %' + Math.abs(dayChange).toFixed(2);
+                changeEl.className = 'change ' + (dayChange >= 0 ? 'positive' : 'negative');
+
+                let cardHTML = `<div class="card"><div class="card-title">Gunluk Degisim</div><div class="card-value" style="color:${dayChange>=0?'#3fb950':'#f85149'}">%${dayChange>=0?'+':''}${dayChange.toFixed(2)}</div></div>`;
+                
+                const periods = [['5d','Haftalik'],['22d','Aylik'],['66d','3 Aylik'],['132d','6 Aylik'],['252d','1 Yillik']];
+                for (const [p, label] of periods) {
+                    const days = parseInt(p);
+                    if (close.length > days) {
+                        const first = close[Math.max(0, close.length-days-1)];
+                        const val = ((close[close.length-1] - first) / first * 100);
+                        cardHTML += `<div class="card"><div class="card-title">${label} Degisim</div><div class="card-value" style="color:${val>=0?'#3fb950':'#f85149'}">%${val>=0?'+':''}${val.toFixed(2)}</div></div>`;
+                    }
+                }
+                
+                cardHTML += `
+                    <div class="card"><div class="card-title">Gunluk Hacim (TL)</div><div class="card-value">${dayVolume>=1e9?(dayVolume/1e9).toFixed(1)+' Milyar':(dayVolume/1e6).toFixed(0)+' Milyon'}</div></div>
+                    <div class="card"><div class="card-title">30 Gun Ort. Hacim</div><div class="card-value">${avgVolume>=1e9?(avgVolume/1e9).toFixed(1)+' Milyar':(avgVolume/1e6).toFixed(0)+' Milyon'}</div></div>
+                    <div class="card"><div class="card-title">RSI (14)</div><div class="card-value" style="color:${rsi>70?'#f85149':rsi<30?'#3fb950':'#e6edf3'}">${rsi.toFixed(0)}</div></div>
+                    <div class="card"><div class="card-title">EMA 9 / EMA 21</div><div class="card-value">${ema9.toFixed(2)} / ${ema21.toFixed(2)}</div></div>
+                    <div class="card"><div class="card-title">Giris / Hedef / Stop</div><div class="card-value">${entry} / ${target} / ${stop}</div><div class="card-sub">Risk/Kazanc: ${rr}</div></div>
+                    <div class="card"><div class="card-title">Sinyal</div><span class="signal signal-${signalClass}">${signal}</span></div>
+                `;
+                document.getElementById('grid').innerHTML = cardHTML;
+
+                document.getElementById('chartContainer').innerHTML = '<div id="tvChart" style="height:500px;"></div>';
+                new TradingView.widget({
+                    container_id: "tvChart",
+                    symbol: "BIST:" + sym,
+                    interval: "D",
+                    theme: "dark",
+                    style: "1",
+                    locale: "tr",
+                    toolbar_bg: "#161b22",
+                    hide_top_toolbar: false,
+                    save_image: false,
+                    timezone: "Europe/Istanbul",
+                    range: "12M",
+                    allow_symbol_change: false,
+                    studies: ["MASimple@tv-basicstudies","MACD@tv-basicstudies","RSI@tv-basicstudies","BB@tv-basicstudies"]
+                });
+
+                loading.style.display = 'none';
+                resultDiv.style.display = 'block';
+            } catch(e) {
+                loading.style.display = 'none';
+                alert('❌ Veri bulunamadi: ' + sym + '\n\nHenuz bu hisse icin veri cekilmemis olabilir.');
+            }
+        }
+    </script>
+</body>
+</html>
