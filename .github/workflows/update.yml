@@ -1,6 +1,11 @@
 name: Hisse Verisi Guncelle
 on:
   workflow_dispatch:
+    inputs:
+      sym:
+        description: 'Hisse Kodu'
+        required: true
+        default: 'THYAO'
 jobs:
   update:
     runs-on: ubuntu-latest
@@ -12,18 +17,20 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install requests
-      - name: Veri Cek
+      - name: Veri Cek ve Kaydet
         run: |
-          python -c "
+          python << 'PYEOF'
           import requests, json, os
+          sym = "${{ github.event.inputs.sym }}"
           headers = {'User-Agent': 'Mozilla/5.0'}
-          url = 'https://query1.finance.yahoo.com/v8/finance/chart/THYAO.IS?interval=1d&range=60d'
+          url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}.IS?interval=1d&range=60d"
           r = requests.get(url, headers=headers)
           os.makedirs('data', exist_ok=True)
-          with open('data/THYAO.json', 'w') as f:
+          filepath = f"data/{sym}.json"
+          with open(filepath, 'w') as f:
               json.dump(r.json(), f)
-          print('THYAO verisi guncellendi')
-          "
+          print(f"{sym} verisi kaydedildi: {filepath}")
+          PYEOF
       - uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: Veri guncellendi
+          commit_message: "Veri: ${{ github.event.inputs.sym }}"
