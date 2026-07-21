@@ -18,7 +18,7 @@
         .negative { color: #f85149; background: #f8514920; }
         .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 20px; }
         .card { background: #0d1117; border: 1px solid #30363d; border-radius: 10px; padding: 14px; }
-        .card-title { font-size: 11px; color: #8b949e; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.5px; }
+        .card-title { font-size: 11px; color: #8b949e; text-transform: uppercase; margin-bottom: 6px; }
         .card-value { font-size: 17px; font-weight: bold; }
         .card-sub { font-size: 11px; color: #8b949e; margin-top: 4px; }
         .signal { display: inline-block; padding: 6px 14px; border-radius: 6px; font-size: 14px; font-weight: bold; }
@@ -67,23 +67,36 @@
             }
         });
 
+        async function fetchYahoo(symbol) {
+            // CORS proxy kullan
+            const urls = [
+                `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=60d`)}`,
+                `https://corsproxy.io/?${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=60d`)}`,
+                `https://api.codetabs.com/v1/proxy?quest=https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=60d`
+            ];
+            
+            for (const url of urls) {
+                try {
+                    const resp = await fetch(url);
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        if (data.chart && data.chart.result) return data;
+                    }
+                } catch(e) {
+                    continue;
+                }
+            }
+            throw new Error('Tum proxy denemeleri basarisiz');
+        }
+
         async function loadStock(sym) {
             resultDiv.style.display = 'none';
             errorDiv.style.display = 'none';
             loading.style.display = 'block';
 
             try {
-                // Yahoo Finance v8 API - farkli endpoint
                 const symbol = sym + '.IS';
-                const url = `https://query2.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=60d`;
-                
-                const resp = await fetch(url);
-                if (!resp.ok) throw new Error('HTTP ' + resp.status);
-                
-                const data = await resp.json();
-                if (!data.chart || !data.chart.result || data.chart.error) {
-                    throw new Error('Hisse bulunamadi');
-                }
+                const data = await fetchYahoo(symbol);
                 
                 const result = data.chart.result[0];
                 const meta = result.meta;
@@ -95,13 +108,11 @@
                 const prevClose = meta.previousRegularMarketPrice || (close.length > 1 ? close[close.length-2] : lastPrice);
                 const dayChange = ((lastPrice - prevClose) / prevClose * 100);
                 
-                // Hacim TL
                 const lastVol = volume.length > 0 ? volume[volume.length-1] : 0;
                 const dayVolume = lastVol * lastPrice;
                 const avgVol = volume.slice(-30).reduce((a,b) => a+b, 0) / Math.min(30, volume.slice(-30).length);
                 const avgVolume = avgVol * lastPrice;
 
-                // RSI
                 let rsi = 50;
                 if (close.length > 14) {
                     let gains = 0, losses = 0;
@@ -111,42 +122,33 @@
                     }
                     const avgGain = gains/14;
                     const avgLoss = losses/14;
-                    if (avgLoss > 0) {
-                        const rs = avgGain / avgLoss;
-                        rsi = 100 - (100/(1+rs));
-                    }
+                    if (avgLoss > 0) { const rs = avgGain / avgLoss; rsi = 100 - (100/(1+rs)); }
                 }
 
-                // EMA
                 const ema9 = close.slice(-9).reduce((a,b)=>a+b,0)/Math.min(9, close.slice(-9).length);
                 const ema21 = close.slice(-21).reduce((a,b)=>a+b,0)/Math.min(21, close.slice(-21).length);
 
-                // Sinyal
                 let signal = 'YATAY', signalClass = 'YATAY';
                 if (ema9 > ema21 && rsi > 50) { signal = 'YUKSELEN'; signalClass = 'YUKSELEN'; }
                 else if (ema9 < ema21 && rsi < 50) { signal = 'DUSEN'; signalClass = 'DUSEN'; }
                 if (rsi > 55 && ema9 > ema21 && dayChange > 0) { signal = 'AL'; signalClass = 'AL'; }
                 else if (rsi < 45 && ema9 < ema21 && dayChange < 0) { signal = 'SAT'; signalClass = 'SAT'; }
 
-                // Seviyeler
                 const entry = (lastPrice * 0.98).toFixed(2);
                 const target = (lastPrice * 1.05).toFixed(2);
                 const stop = (lastPrice * 0.96).toFixed(2);
                 const rr = ((target-lastPrice)/(lastPrice-stop)).toFixed(1);
 
-                // Donemsel degisim
                 const changes = {};
                 const periods = { '5d':'Haftalik', '22d':'Aylik', '66d':'3 Aylik', '132d':'6 Aylik', '252d':'1 Yillik' };
                 for (const [p, label] of Object.entries(periods)) {
                     const days = parseInt(p);
                     if (close.length > days) {
                         const first = close[Math.max(0, close.length-days-1)];
-                        const last = close[close.length-1];
-                        changes[label] = ((last - first) / first * 100);
+                        changes[label] = ((close[close.length-1] - first) / first * 100);
                     }
                 }
 
-                // Goster
                 document.getElementById('price').textContent = '₺' + lastPrice.toFixed(2);
                 document.getElementById('stockName').textContent = sym;
                 const changeEl = document.getElementById('change');
@@ -159,7 +161,7 @@
                 }
                 cardHTML += `
                     <div class="card"><div class="card-title">Gunluk Hacim (TL)</div><div class="card-value">${dayVolume>=1e9?(dayVolume/1e9).toFixed(1)+' Milyar':(dayVolume/1e6).toFixed(0)+' Milyon'}</div></div>
-                    <div class="card"><div class="card-title">30 Gun Ort. Hacim (TL)</div><div class="card-value">${avgVolume>=1e9?(avgVolume/1e9).toFixed(1)+' Milyar':(avgVolume/1e6).toFixed(0)+' Milyon'}</div></div>
+                    <div class="card"><div class="card-title">30 Gun Ort. Hacim</div><div class="card-value">${avgVolume>=1e9?(avgVolume/1e9).toFixed(1)+' Milyar':(avgVolume/1e6).toFixed(0)+' Milyon'}</div></div>
                     <div class="card"><div class="card-title">RSI (14)</div><div class="card-value" style="color:${rsi>70?'#f85149':rsi<30?'#3fb950':'#e6edf3'}">${rsi.toFixed(0)}</div></div>
                     <div class="card"><div class="card-title">EMA 9 / EMA 21</div><div class="card-value">${ema9.toFixed(2)} / ${ema21.toFixed(2)}</div></div>
                     <div class="card"><div class="card-title">Giris / Hedef / Stop</div><div class="card-value">${entry} / ${target} / ${stop}</div><div class="card-sub">Risk/Kazanc: ${rr}</div></div>
@@ -167,7 +169,6 @@
                 `;
                 document.getElementById('grid').innerHTML = cardHTML;
 
-                // TradingView grafigi
                 document.getElementById('chartContainer').innerHTML = '<div id="tvChart" style="height:500px;"></div>';
                 new TradingView.widget({
                     container_id: "tvChart",
