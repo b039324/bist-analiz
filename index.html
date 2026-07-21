@@ -16,12 +16,12 @@
         .change { font-size: 20px; font-weight: bold; padding: 6px 12px; border-radius: 8px; }
         .positive { color: #3fb950; background: #3fb95020; }
         .negative { color: #f85149; background: #f8514920; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 20px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 20px; }
         .card { background: #0d1117; border: 1px solid #30363d; border-radius: 10px; padding: 14px; }
-        .card-title { font-size: 12px; color: #8b949e; text-transform: uppercase; margin-bottom: 6px; }
-        .card-value { font-size: 18px; font-weight: bold; }
-        .card-sub { font-size: 12px; color: #8b949e; }
-        .signal { display: inline-block; padding: 8px 18px; border-radius: 8px; font-size: 16px; font-weight: bold; }
+        .card-title { font-size: 11px; color: #8b949e; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.5px; }
+        .card-value { font-size: 17px; font-weight: bold; }
+        .card-sub { font-size: 11px; color: #8b949e; margin-top: 4px; }
+        .signal { display: inline-block; padding: 6px 14px; border-radius: 6px; font-size: 14px; font-weight: bold; }
         .signal-AL { background: #3fb95030; color: #3fb950; }
         .signal-SAT { background: #f8514930; color: #f85149; }
         .signal-YUKSELEN { background: #3fb95020; color: #7ee787; }
@@ -33,6 +33,7 @@
         @media (max-width: 600px) {
             .price { font-size: 28px; }
             #chart { height: 350px; }
+            .grid { grid-template-columns: repeat(2, 1fr); }
         }
     </style>
 </head>
@@ -50,114 +51,120 @@
             <div class="grid" id="grid"></div>
             <div id="chart"></div>
         </div>
-        <div class="loading" id="loading" style="display:none;">⏳ Veriler yükleniyor...</div>
+        <div class="loading" id="loading" style="display:none;">⏳ Veriler yukleniyor...</div>
         <div class="error" id="error" style="display:none;"></div>
     </div>
 
     <script src="https://s3.tradingview.com/tv.js"></script>
     <script>
         const searchInput = document.getElementById('searchInput');
-        const result = document.getElementById('result');
+        const resultDiv = document.getElementById('result');
         const loading = document.getElementById('loading');
-        const error = document.getElementById('error');
-        let currentSymbol = '';
+        const errorDiv = document.getElementById('error');
 
         searchInput.addEventListener('keypress', function(e) {
             if (e.key === 'Enter') {
                 const sym = searchInput.value.trim().toUpperCase();
-                if (sym) {
-                    currentSymbol = sym;
-                    loadStock(sym);
-                }
+                if (sym) loadStock(sym);
             }
         });
 
         async function loadStock(sym) {
-            result.style.display = 'none';
-            error.style.display = 'none';
+            resultDiv.style.display = 'none';
+            errorDiv.style.display = 'none';
             loading.style.display = 'block';
 
             try {
                 const symbol = sym + '.IS';
-                const periods = ['1d','5d','1mo','3mo','6mo','1y'];
-                const changes = {};
-
-                for (const p of periods) {
-                    const resp = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=${p}`);
-                    const data = await resp.json();
-                    const quote = data.chart.result[0];
-                    const close = quote.indicators.quote[0].close;
-                    if (close && close.length > 1) {
-                        const first = close[0];
-                        const last = close[close.length-1];
-                        changes[p] = ((last - first) / first * 100);
-                    }
-                }
-
-                const resp = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=60d`);
+                
+                // Once 60 gunluk veriyi cek
+                const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=60d`;
+                const resp = await fetch(url);
                 const data = await resp.json();
+                
+                if (data.chart.error) throw new Error('Hisse bulunamadi');
+                
                 const result = data.chart.result[0];
                 const meta = result.meta;
                 const quote = result.indicators.quote[0];
                 const close = quote.close;
                 const volume = quote.volume;
+                
                 const lastPrice = meta.regularMarketPrice;
-                const prevClose = meta.previousRegularMarketPrice;
+                const prevClose = meta.previousRegularMarketPrice || close[close.length-2];
                 const dayChange = ((lastPrice - prevClose) / prevClose * 100);
-                const dayVolume = volume[volume.length-1] * lastPrice;
-                const avgVolume = volume.slice(-30).reduce((a,b) => a+b, 0) / 30 * lastPrice;
+                
+                // Hacim TL
+                const dayVolume = (volume[volume.length-1] || 0) * lastPrice;
+                const avgVolume = volume.slice(-30).filter(v=>v).reduce((a,b)=>a+b,0) / 30 * lastPrice;
 
+                // RSI
                 let rsi = 50;
                 if (close.length > 14) {
                     let gains = 0, losses = 0;
                     for (let i = close.length-14; i < close.length; i++) {
                         const diff = close[i] - close[i-1];
-                        if (diff > 0) gains += diff;
-                        else losses -= diff;
+                        if (diff > 0) gains += diff; else losses -= diff;
                     }
-                    const rs = (gains/14) / (losses/14);
+                    const rs = (gains/14) / ((losses/14) || 0.001);
                     rsi = 100 - (100/(1+rs));
                 }
 
-                let signal = 'YATAY';
-                let signalClass = 'YATAY';
+                // EMA
                 const ema9 = close.slice(-9).reduce((a,b)=>a+b,0)/9;
                 const ema21 = close.slice(-21).reduce((a,b)=>a+b,0)/21;
+
+                // Sinyal
+                let signal = 'YATAY', signalClass = 'YATAY';
                 if (ema9 > ema21 && rsi > 50) { signal = 'YUKSELEN'; signalClass = 'YUKSELEN'; }
                 if (ema9 < ema21 && rsi < 50) { signal = 'DUSEN'; signalClass = 'DUSEN'; }
-                if (rsi > 55 && ema9 > ema21) { signal = 'AL'; signalClass = 'AL'; }
-                if (rsi < 45 && ema9 < ema21) { signal = 'SAT'; signalClass = 'SAT'; }
+                if (rsi > 55 && ema9 > ema21 && dayChange > 0) { signal = 'AL'; signalClass = 'AL'; }
+                if (rsi < 45 && ema9 < ema21 && dayChange < 0) { signal = 'SAT'; signalClass = 'SAT'; }
 
+                // Al/Sat seviyeleri
                 const entry = (lastPrice * 0.98).toFixed(2);
                 const target = (lastPrice * 1.05).toFixed(2);
                 const stop = (lastPrice * 0.96).toFixed(2);
                 const rr = ((target-lastPrice)/(lastPrice-stop)).toFixed(1);
 
+                // Degisim hesapla
+                const changes = {};
+                const periods = { '5d':'Haftalik', '22d':'Aylik', '66d':'3 Aylik', '132d':'6 Aylik', '252d':'1 Yillik' };
+                
+                for (const [p, label] of Object.entries(periods)) {
+                    const days = parseInt(p);
+                    if (close.length > days) {
+                        const first = close[close.length-days-1] || close[0];
+                        const last = close[close.length-1];
+                        changes[label] = ((last - first) / first * 100);
+                    }
+                }
+
+                // Goster
                 document.getElementById('price').textContent = '₺' + lastPrice.toFixed(2);
                 document.getElementById('stockName').textContent = sym;
                 const changeEl = document.getElementById('change');
                 changeEl.textContent = (dayChange >= 0 ? '▲' : '▼') + ' %' + Math.abs(dayChange).toFixed(2);
                 changeEl.className = 'change ' + (dayChange >= 0 ? 'positive' : 'negative');
 
-                const labels = { '1d':'Günlük', '5d':'Haftalık', '1mo':'Aylık', '3mo':'3 Aylık', '6mo':'6 Aylık', '1y':'1 Yıllık' };
-                let changeHTML = '';
-                for (const [p, label] of Object.entries(labels)) {
-                    if (changes[p] !== undefined) {
-                        const c = changes[p];
-                        changeHTML += `<div class="card"><div class="card-title">${label} Değişim</div><div class="card-value" style="color:${c>=0?'#3fb950':'#f85149'}">%${c>=0?'+':''}${c.toFixed(2)}</div></div>`;
-                    }
+                let cardHTML = `<div class="card"><div class="card-title">Gunluk Degisim</div><div class="card-value" style="color:${dayChange>=0?'#3fb950':'#f85149'}">%${dayChange>=0?'+':''}${dayChange.toFixed(2)}</div></div>`;
+                
+                for (const [label, val] of Object.entries(changes)) {
+                    cardHTML += `<div class="card"><div class="card-title">${label} Degisim</div><div class="card-value" style="color:${val>=0?'#3fb950':'#f85149'}">%${val>=0?'+':''}${val.toFixed(2)}</div></div>`;
                 }
-
-                document.getElementById('grid').innerHTML = `
-                    ${changeHTML}
-                    <div class="card"><div class="card-title">Günlük Hacim (TL)</div><div class="card-value">${dayVolume >= 1e9 ? (dayVolume/1e9).toFixed(1)+' Milyar' : (dayVolume/1e6).toFixed(0)+' Milyon'}</div></div>
-                    <div class="card"><div class="card-title">30 Gün Ort. Hacim (TL)</div><div class="card-value">${avgVolume >= 1e9 ? (avgVolume/1e9).toFixed(1)+' Milyar' : (avgVolume/1e6).toFixed(0)+' Milyon'}</div></div>
+                
+                cardHTML += `
+                    <div class="card"><div class="card-title">Gunluk Hacim (TL)</div><div class="card-value">${dayVolume>=1e9?(dayVolume/1e9).toFixed(1)+' Milyar':(dayVolume/1e6).toFixed(0)+' Milyon'}</div></div>
+                    <div class="card"><div class="card-title">30 Gun Ort. Hacim (TL)</div><div class="card-value">${avgVolume>=1e9?(avgVolume/1e9).toFixed(1)+' Milyar':(avgVolume/1e6).toFixed(0)+' Milyon'}</div></div>
                     <div class="card"><div class="card-title">RSI (14)</div><div class="card-value" style="color:${rsi>70?'#f85149':rsi<30?'#3fb950':'#e6edf3'}">${rsi.toFixed(0)}</div></div>
                     <div class="card"><div class="card-title">EMA 9 / EMA 21</div><div class="card-value">${ema9.toFixed(2)} / ${ema21.toFixed(2)}</div></div>
-                    <div class="card"><div class="card-title">🎯 Giriş / Hedef / Stop</div><div class="card-value">₺${entry} / ₺${target} / ₺${stop}</div><div class="card-sub">R/R: ${rr}</div></div>
-                    <div class="card"><div class="card-title">📊 Sinyal</div><span class="signal signal-${signalClass}">${signal}</span></div>
+                    <div class="card"><div class="card-title">Giris / Hedef / Stop</div><div class="card-value">${entry} / ${target} / ${stop}</div><div class="card-sub">Risk/Kazanc: ${rr}</div></div>
+                    <div class="card"><div class="card-title">Sinyal</div><span class="signal signal-${signalClass}">${signal}</span></div>
                 `;
 
+                document.getElementById('grid').innerHTML = cardHTML;
+
+                // TradingView grafigi
                 document.getElementById('chart').innerHTML = '';
                 new TradingView.widget({
                     container_id: "chart",
@@ -180,11 +187,12 @@
                 });
 
                 loading.style.display = 'none';
-                result.style.display = 'block';
+                resultDiv.style.display = 'block';
             } catch(e) {
                 loading.style.display = 'none';
-                error.style.display = 'block';
-                error.textContent = '❌ Hisse bulunamadı: ' + currentSymbol;
+                errorDiv.style.display = 'block';
+                errorDiv.textContent = '❌ Hisse bulunamadi: ' + sym + '\n\nHata: ' + e.message;
+                console.error(e);
             }
         }
     </script>
